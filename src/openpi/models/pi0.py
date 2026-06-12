@@ -287,7 +287,7 @@ class Pi0(_model.BaseModel):
         attn_mask = make_attn_mask(input_mask, ar_mask)
         positions = jnp.cumsum(input_mask, axis=1) - 1
 
-        _, suffix_out), _ = self.PaliGemma.llm(
+        (_, suffix_out), _ = self.PaliGemma.llm(
             [prefix_tokens, suffix_tokens],
             mask=attn_mask,
             positions=positions,
@@ -429,7 +429,7 @@ class Pi0(_model.BaseModel):
                     - 1
                 )
 
-                prefix_out_step, suffix_out), _ = self.PaliGemma.llm(
+                (prefix_out_step, suffix_out), _ = self.PaliGemma.llm(
                     [None, suffix_tokens],
                     mask=full_attn_mask,
                     positions=positions,
@@ -460,8 +460,8 @@ class Pi0(_model.BaseModel):
 
         fiper_chunks = None
         if is_hook_enabled("fiper_action_chunks"):
-            hook_config = get_hook_config()
-            num_samples = int(hook_config.get("ace_num_samples", 8))
+            cfg = get_hook_config().get("fiper_action_chunks", {})
+            num_samples = int(cfg.get("num_samples", 8))
 
             sample_noises = jax.random.normal(
                 rng,

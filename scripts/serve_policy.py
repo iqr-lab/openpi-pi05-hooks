@@ -103,7 +103,16 @@ def create_policy(args: Args) -> _policy.Policy:
 
 def main(args: Args) -> None:
     set_enabled_hooks(args.hooks)
-    set_hook_config({"ace_num_samples": args.ace_num_samples})
+    set_hook_config(
+        {
+            "fiper_action_chunks": {
+                "num_samples": args.ace_num_samples,
+            },
+            "raw_attention_weights": {
+                "layers": args.attn_layers,
+            },
+        }
+    )
 
     policy = create_policy(args)
     policy_metadata = policy.metadata
