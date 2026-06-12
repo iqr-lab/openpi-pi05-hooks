@@ -10,6 +10,8 @@ from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
+from pi05_hooks.hook_runner import set_enabled_hooks, set_hook_config
+import pi05_hooks.hooks
 
 class EnvMode(enum.Enum):
     """Supported environments."""
@@ -54,6 +56,9 @@ class Args:
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
+    hooks: list[str] = dataclasses.field(default_factory=list)
+    ace_num_samples: int = 8
+
 
 # Default checkpoints that should be used for each environment.
 DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
@@ -97,10 +102,12 @@ def create_policy(args: Args) -> _policy.Policy:
 
 
 def main(args: Args) -> None:
+    set_enabled_hooks(args.hooks)
+    set_hook_config({"ace_num_samples": args.ace_num_samples})
+
     policy = create_policy(args)
     policy_metadata = policy.metadata
 
-    # Record the policy's behavior.
     if args.record:
         policy = _policy.PolicyRecorder(policy, "policy_records")
 
@@ -115,8 +122,4 @@ def main(args: Args) -> None:
         metadata=policy_metadata,
     )
     server.serve_forever()
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, force=True)
-    main(tyro.cli(Args))
+    
