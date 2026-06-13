@@ -13,7 +13,7 @@ import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
 
-from pi05_hooks.hook_runner import emit_all, is_hook_enabled, get_hook_config
+from pi05_hooks.runtime import collect_hook_data
 
 logger = logging.getLogger("openpi")
 
@@ -133,8 +133,6 @@ class Pi0(_model.BaseModel):
         self._embed_dtype = config.dtype
         self._adarms = config.pi05
 
-    def get_hook_records(self):
-        return getattr(self, "_last_hook_records", [])
 
     def _get_llm_vars(self) -> dict:
         from flax.nnx.bridge import variables as bv  # noqa: PLC0415
@@ -298,207 +296,6 @@ class Pi0(_model.BaseModel):
 
         return jnp.mean(jnp.square(v_t - u_t), axis=-1)
 
-    def _compute_raw_attention_weights(
-        self,
-        observation,
-        prefix_tokens,
-        prefix_mask,
-        prefix_ar_mask,
-        kv_cache,
-        noise,
-    ):
-        batch_size = prefix_tokens.shape[0]
-        prefix_len = prefix_tokens.shape[1]
-
-        suf_tok, suf_mask, suf_ar_mask, adarms = self.embed_suffix(
-            observation,
-            noise,
-            jnp.ones(batch_size),
-        )
-
-        suf_len = suf_tok.shape[1]
-        pfx_for_suf = einops.repeat(prefix_mask, "b p -> b s p", s=suf_len)
-        suf_attn = make_attn_mask(suf_mask, suf_ar_mask)
-        full_attn = jnp.concatenate([pfx_for_suf, suf_attn], axis=-1)
-
-        suf_pos = (
-            jnp.sum(prefix_mask, axis=-1)[:, None]
-            + jnp.cumsum(suf_mask, axis=-1)
-            - 1
-        )
-
-        record_module = self._make_record_module()
-        variables = self._get_llm_vars()
-
-        _outputs, _kv_new, attn_probs = record_module.apply(
-            variables,
-            [None, suf_tok],
-            suf_pos,
-            full_attn,
-            [None, adarms],
-            kv_cache=kv_cache,
-        )
-
-        has_suffix_state_token = not self.pi05
-        key_end = prefix_len + (1 if has_suffix_state_token else 0)
-
-        if _ATTN_LAYERS is None:
-            layer_indices = jnp.arange(attn_probs.shape[0])
-            attn_weights = attn_probs[:, :, :, :, :, :key_end]
-        else:
-            layer_indices = jnp.array(_ATTN_LAYERS)
-            attn_weights = attn_probs[_ATTN_LAYERS, :, :, :, :, :key_end]
-
-        num_layers = attn_weights.shape[0]
-        k_heads = attn_weights.shape[2]
-        g_groups = attn_weights.shape[3]
-
-        attn_weights = attn_weights.reshape(
-            num_layers,
-            batch_size,
-            k_heads * g_groups,
-            suf_len,
-            key_end,
-        )
-
-        attn_weights = attn_weights.transpose(1, 0, 2, 3, 4)
-
-        return {
-            "weights": attn_weights,
-            "layers": layer_indices,
-            "key_end": key_end,
-            "suffix_len": suf_len,
-            "num_heads": k_heads * g_groups,
-            "num_layers": num_layers,
-        }
-
-    def _compute_prefix_gradients(
-        self,
-        observation,
-        prefix_tokens,
-        prefix_mask,
-        prefix_ar_mask,
-        noise,
-    ):
-        batch_size = prefix_tokens.shape[0]
-        timestep_for_grad = jnp.ones(batch_size)
-
-        def score_fn(prefix_emb):
-            prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
-            prefix_positions = jnp.cumsum(prefix_mask, axis=1) - 1
-
-            _, kv_cache = self.PaliGemma.llm(
-                [prefix_emb, None],
-                mask=prefix_attn_mask,
-                positions=prefix_positions,
-            )
-
-            suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
-                observation,
-                noise,
-                timestep_for_grad,
-            )
-
-            suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
-            prefix_for_suffix = einops.repeat(
-                prefix_mask,
-                "b p -> b s p",
-                s=suffix_tokens.shape[1],
-            )
-            full_attn_mask = jnp.concatenate(
-                [prefix_for_suffix, suffix_attn_mask],
-                axis=-1,
-            )
-
-            suffix_positions = (
-                jnp.sum(prefix_mask, axis=-1)[:, None]
-                + jnp.cumsum(suffix_mask, axis=-1)
-                - 1
-            )
-
-            (_, suffix_out), _ = self.PaliGemma.llm(
-                [None, suffix_tokens],
-                mask=full_attn_mask,
-                positions=suffix_positions,
-                kv_cache=kv_cache,
-                adarms_cond=[None, adarms_cond],
-            )
-
-            v_t = self.action_out_proj(
-                suffix_out[:, -self.action_horizon :]
-            )
-
-            return jnp.sum(v_t)
-
-        return jax.grad(score_fn)(prefix_tokens)
-
-    def _compute_token_spans(
-        self,
-        observation,
-        prefix_tokens,
-    ):
-        """
-        Build token ranges for:
-            image tokens
-            prompt tokens
-            state tokens
-
-        Returns token ranges inside prefix_tokens.
-        """
-
-        spans = {}
-
-        cur = 0
-
-        #
-        # Image tokens
-        #
-        image_spans = {}
-
-        for image_name in observation.images:
-            #
-            # SigLIP encoder produces 256 patch tokens
-            # for 224x224 images.
-            #
-            image_token_count = 256
-
-            image_spans[image_name] = {
-                "start": cur,
-                "end": cur + image_token_count,
-            }
-
-            cur += image_token_count
-
-        spans["image"] = image_spans
-
-        #
-        # Prompt + state tokens
-        #
-        task_len = observation.task_token_len
-        state_len = observation.state_token_len
-
-        if task_len is not None:
-            spans["prompt"] = {
-                "start": cur,
-                "end": cur + task_len,
-            }
-
-            cur += task_len
-
-        if state_len is not None:
-            spans["state"] = {
-                "start": cur,
-                "end": cur + state_len,
-            }
-
-            cur += state_len
-
-        spans["prefix"] = {
-            "start": 0,
-            "end": int(prefix_tokens.shape[1]),
-        }
-
-        return spans
 
     @override
     def sample_actions(
@@ -586,65 +383,18 @@ class Pi0(_model.BaseModel):
 
         x_0 = run_denoising(noise)
 
-        action_chunks = None
-
-        if is_hook_enabled("action_chunks"):
-            cfg = get_hook_config().get("action_chunks", {})
-            num_chunks = int(cfg.get("num_chunks", 1))
-
-            if num_chunks <= 1:
-                action_chunks = x_0[None, ...]
-            else:
-                extra_noises = jax.random.normal(
-                    rng,
-                    (num_chunks - 1, batch_size, self.action_horizon, self.action_dim),
-                )
-
-                chunks = [x_0]
-                for i in range(num_chunks - 1):
-                    chunks.append(run_denoising(extra_noises[i]))
-
-                action_chunks = jnp.stack(chunks, axis=0)
-
-        raw_attention_weights = None
-        if is_hook_enabled("raw_attention_weights"):
-            raw_attention_weights = self._compute_raw_attention_weights(
-                observation=observation,
-                prefix_tokens=prefix_tokens,
-                prefix_mask=prefix_mask,
-                prefix_ar_mask=prefix_ar_mask,
-                kv_cache=kv_cache,
-                noise=noise,
-            )
-
-        prefix_gradients = None
-        if is_hook_enabled("prefix_gradients"):
-            prefix_gradients = self._compute_prefix_gradients(
-                observation=observation,
-                prefix_tokens=prefix_tokens,
-                prefix_mask=prefix_mask,
-                prefix_ar_mask=prefix_ar_mask,
-                noise=noise,
-            )
-
-        token_spans = None
-
-        if is_hook_enabled("token_spans"):
-            token_spans = self._compute_token_spans(
-                observation,
-                prefix_tokens,
-            )
-
-        hook_data = {
-            "observation": observation,
-            "token_spans": token_spans,
-            "prefix_tokens": prefix_tokens,
-            "prefix_mask": prefix_mask,
-            "prefix_ar_mask": prefix_ar_mask,
-            "prefix_final_hidden_state": prefix_out,
-            "prefix_gradients": prefix_gradients,
-            "action_chunks": action_chunks,
-            "raw_attention_weights": raw_attention_weights,
-        }
+        hook_data = collect_hook_data(
+            model=self,
+            rng=rng,
+            observation=observation,
+            prefix_tokens=prefix_tokens,
+            prefix_mask=prefix_mask,
+            prefix_ar_mask=prefix_ar_mask,
+            prefix_final_hidden_state=prefix_out,
+            kv_cache=kv_cache,
+            noise=noise,
+            actions=x_0,
+            run_denoising=run_denoising,
+        )
 
         return x_0, hook_data
