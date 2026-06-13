@@ -1,7 +1,9 @@
 import dataclasses
 import enum
 import logging
+import os
 import socket
+from datetime import datetime
 
 import tyro
 
@@ -9,13 +11,14 @@ from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
+print("DEBUG: imported openpi modules", flush=True)
 
 from pi05_hooks.hook_runner import set_enabled_hooks, set_hook_config
-import pi05_hooks.hooks
+import pi05_hooks.hooks  # noqa: F401
+print("DEBUG: imported pi05_hooks.hooks", flush=True)
+
 
 class EnvMode(enum.Enum):
-    """Supported environments."""
-
     ALOHA = "aloha"
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
@@ -24,105 +27,129 @@ class EnvMode(enum.Enum):
 
 @dataclasses.dataclass
 class Checkpoint:
-    """Load a policy from a trained checkpoint."""
-
-    # Training config name (e.g., "pi0_aloha_sim").
     config: str
-    # Checkpoint directory (e.g., "checkpoints/pi0_aloha_sim/exp/10000").
     dir: str
 
 
 @dataclasses.dataclass
 class Default:
-    """Use the default policy for the given environment."""
+    pass
 
 
 @dataclasses.dataclass
 class Args:
-    """Arguments for the serve_policy script."""
-
-    # Environment to serve the policy for. This is only used when serving default policies.
     env: EnvMode = EnvMode.ALOHA_SIM
-
-    # If provided, will be used in case the "prompt" key is not present in the data, or if the model doesn't have a default
-    # prompt.
     default_prompt: str | None = None
-
-    # Port to serve the policy on.
     port: int = 8000
-    # Record the policy's behavior for debugging.
     record: bool = False
-
-    # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
-    hooks: list[str] = dataclasses.field(default_factory=list)
-    ace_num_samples: int = 8
 
-
-# Default checkpoints that should be used for each environment.
 DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
-    EnvMode.ALOHA: Checkpoint(
-        config="pi05_aloha",
-        dir="gs://openpi-assets/checkpoints/pi05_base",
-    ),
-    EnvMode.ALOHA_SIM: Checkpoint(
-        config="pi0_aloha_sim",
-        dir="gs://openpi-assets/checkpoints/pi0_aloha_sim",
-    ),
-    EnvMode.DROID: Checkpoint(
-        config="pi05_droid",
-        dir="gs://openpi-assets/checkpoints/pi05_droid",
-    ),
-    EnvMode.LIBERO: Checkpoint(
-        config="pi05_libero",
-        dir="gs://openpi-assets/checkpoints/pi05_libero",
-    ),
+    EnvMode.ALOHA: Checkpoint("pi05_aloha", "gs://openpi-assets/checkpoints/pi05_base"),
+    EnvMode.ALOHA_SIM: Checkpoint("pi0_aloha_sim", "gs://openpi-assets/checkpoints/pi0_aloha_sim"),
+    EnvMode.DROID: Checkpoint("pi05_droid", "gs://openpi-assets/checkpoints/pi05_droid"),
+    EnvMode.LIBERO: Checkpoint("pi05_libero", "gs://openpi-assets/checkpoints/pi05_libero"),
 }
 
 
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
-    """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
         return _policy_config.create_trained_policy(
-            _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
+            _config.get_config(checkpoint.config),
+            checkpoint.dir,
+            default_prompt=default_prompt,
         )
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
 def create_policy(args: Args) -> _policy.Policy:
-    """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _config.get_config(args.policy.config),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
             )
         case Default():
             return create_default_policy(args.env, default_prompt=args.default_prompt)
 
 
+def _parse_hooks_from_env() -> list[str]:
+    hooks_str = os.environ.get("PI05_HOOKS", "")
+    return [h.strip() for h in hooks_str.split(",") if h.strip()]
+
+
+def _parse_attn_layers_from_env() -> list[int] | None:
+    layers_str = os.environ.get("PI05_ATTN_LAYERS", "all").strip().lower()
+
+    if layers_str in ("", "all", "none"):
+        return None
+
+    return [int(x.strip()) for x in layers_str.split(",") if x.strip()]
+
+
 def main(args: Args) -> None:
-    set_enabled_hooks(args.hooks)
+    print("=" * 80, flush=True)
+    print("DEBUG: entered main()", flush=True)
+    print("=" * 80, flush=True)
+    print(f"DEBUG: args = {args}", flush=True)
+
+    hooks = _parse_hooks_from_env()
+    attn_layers = _parse_attn_layers_from_env()
+    ace_num_samples = int(os.environ.get("PI05_ACE_NUM_SAMPLES", "8"))
+
+    print("DEBUG: configuring hooks", flush=True)
+    print(f"DEBUG: hooks = {hooks}", flush=True)
+    print(f"DEBUG: attention layers = {attn_layers}", flush=True)
+    print(f"DEBUG: ace_num_samples = {ace_num_samples}", flush=True)
+
+    set_enabled_hooks(hooks)
     set_hook_config(
         {
             "fiper_action_chunks": {
-                "num_samples": args.ace_num_samples,
+                "num_samples": ace_num_samples,
             },
             "raw_attention_weights": {
-                "layers": args.attn_layers,
+                "layers": attn_layers,
             },
         }
     )
 
+    print("DEBUG: creating policy", flush=True)
     policy = create_policy(args)
+    print("DEBUG: policy created successfully", flush=True)
+    print(f"DEBUG: policy type = {type(policy)}", flush=True)
+
     policy_metadata = policy.metadata
+    print("DEBUG: retrieved metadata", flush=True)
 
     if args.record:
-        policy = _policy.PolicyRecorder(policy, "policy_records")
+        print("DEBUG: creating record directory", flush=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        match args.policy:
+            case Checkpoint():
+                policy_tag = args.policy.config
+            case Default():
+                policy_tag = args.env.value
+
+        record_dir = (
+            f"/nfs/roberts/scratch/pi_tkf6/as4643/"
+            f"policy_records_{policy_tag}_{timestamp}"
+        )
+
+        print(f"DEBUG: record_dir = {record_dir}", flush=True)
+
+        policy = _policy.PolicyRecorder(policy, record_dir)
+        print("DEBUG: PolicyRecorder created", flush=True)
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
+
+    print(f"DEBUG: hostname = {hostname}", flush=True)
+    print(f"DEBUG: local_ip = {local_ip}", flush=True)
 
     server = websocket_policy_server.WebsocketPolicyServer(
         policy=policy,
@@ -130,5 +157,17 @@ def main(args: Args) -> None:
         port=args.port,
         metadata=policy_metadata,
     )
+
+    print("DEBUG: websocket server created", flush=True)
+    print(f"DEBUG: listening on port {args.port}", flush=True)
+    print("DEBUG: entering serve_forever()", flush=True)
+
     server.serve_forever()
-    
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, force=True)
+    print("DEBUG: before tyro.cli", flush=True)
+    parsed_args = tyro.cli(Args)
+    print(f"DEBUG: parsed_args = {parsed_args}", flush=True)
+    main(parsed_args)

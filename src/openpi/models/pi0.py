@@ -496,7 +496,5 @@ class Pi0(_model.BaseModel):
             "fiper_action_chunks": fiper_chunks,
             "raw_attention_weights": raw_attention_weights,
         }
-
-        self._last_hook_records = emit_all(hook_data)
-
-        return x_0
+        
+        return x_0, hook_data
