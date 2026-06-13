@@ -458,21 +458,25 @@ class Pi0(_model.BaseModel):
 
         x_0 = run_denoising(noise)
 
-        fiper_chunks = None
-        if is_hook_enabled("fiper_action_chunks"):
-            cfg = get_hook_config().get("fiper_action_chunks", {})
-            num_samples = int(cfg.get("num_samples", 8))
+        action_chunks = None
 
-            sample_noises = jax.random.normal(
-                rng,
-                (num_samples, batch_size, self.action_horizon, self.action_dim),
-            )
+        if is_hook_enabled("action_chunks"):
+            cfg = get_hook_config().get("action_chunks", {})
+            num_chunks = int(cfg.get("num_chunks", 1))
 
-            chunks = []
-            for i in range(num_samples):
-                chunks.append(run_denoising(sample_noises[i]))
+            if num_chunks <= 1:
+                action_chunks = x_0[None, ...]
+            else:
+                extra_noises = jax.random.normal(
+                    rng,
+                    (num_chunks - 1, batch_size, self.action_horizon, self.action_dim),
+                )
 
-            fiper_chunks = jnp.stack(chunks, axis=0)
+                chunks = [x_0]
+                for i in range(num_chunks - 1):
+                    chunks.append(run_denoising(extra_noises[i]))
+
+                action_chunks = jnp.stack(chunks, axis=0)
 
         raw_attention_weights = None
         if is_hook_enabled("raw_attention_weights"):
@@ -493,8 +497,8 @@ class Pi0(_model.BaseModel):
             "prefix_final_hidden_state": prefix_out,
             "kv_cache_after_prefix": kv_cache,
             "actions": x_0,
-            "fiper_action_chunks": fiper_chunks,
+            "action_chunks": action_chunks,
             "raw_attention_weights": raw_attention_weights,
         }
-        
+
         return x_0, hook_data

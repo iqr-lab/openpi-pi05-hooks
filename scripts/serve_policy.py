@@ -82,10 +82,8 @@ def _parse_hooks_from_env() -> list[str]:
 
 def _parse_attn_layers_from_env() -> list[int] | None:
     layers_str = os.environ.get("PI05_ATTN_LAYERS", "all").strip().lower()
-
     if layers_str in ("", "all", "none"):
         return None
-
     return [int(x.strip()) for x in layers_str.split(",") if x.strip()]
 
 
@@ -97,18 +95,18 @@ def main(args: Args) -> None:
 
     hooks = _parse_hooks_from_env()
     attn_layers = _parse_attn_layers_from_env()
-    ace_num_samples = int(os.environ.get("PI05_ACE_NUM_SAMPLES", "8"))
+    num_action_chunks = int(os.environ.get("PI05_NUM_ACTION_CHUNKS", "1"))
 
     print("DEBUG: configuring hooks", flush=True)
     print(f"DEBUG: hooks = {hooks}", flush=True)
     print(f"DEBUG: attention layers = {attn_layers}", flush=True)
-    print(f"DEBUG: ace_num_samples = {ace_num_samples}", flush=True)
+    print(f"DEBUG: num_action_chunks = {num_action_chunks}", flush=True)
 
     set_enabled_hooks(hooks)
     set_hook_config(
         {
-            "fiper_action_chunks": {
-                "num_samples": ace_num_samples,
+            "action_chunks": {
+                "num_chunks": num_action_chunks,
             },
             "raw_attention_weights": {
                 "layers": attn_layers,
@@ -125,8 +123,6 @@ def main(args: Args) -> None:
     print("DEBUG: retrieved metadata", flush=True)
 
     if args.record:
-        print("DEBUG: creating record directory", flush=True)
-
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         match args.policy:
@@ -141,7 +137,6 @@ def main(args: Args) -> None:
         )
 
         print(f"DEBUG: record_dir = {record_dir}", flush=True)
-
         policy = _policy.PolicyRecorder(policy, record_dir)
         print("DEBUG: PolicyRecorder created", flush=True)
 
