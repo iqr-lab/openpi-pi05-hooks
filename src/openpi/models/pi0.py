@@ -432,6 +432,74 @@ class Pi0(_model.BaseModel):
 
         return jax.grad(score_fn)(prefix_tokens)
 
+    def _compute_token_spans(
+        self,
+        observation,
+        prefix_tokens,
+    ):
+        """
+        Build token ranges for:
+            image tokens
+            prompt tokens
+            state tokens
+
+        Returns token ranges inside prefix_tokens.
+        """
+
+        spans = {}
+
+        cur = 0
+
+        #
+        # Image tokens
+        #
+        image_spans = {}
+
+        for image_name in observation.images:
+            #
+            # SigLIP encoder produces 256 patch tokens
+            # for 224x224 images.
+            #
+            image_token_count = 256
+
+            image_spans[image_name] = {
+                "start": cur,
+                "end": cur + image_token_count,
+            }
+
+            cur += image_token_count
+
+        spans["image"] = image_spans
+
+        #
+        # Prompt + state tokens
+        #
+        task_len = observation.task_token_len
+        state_len = observation.state_token_len
+
+        if task_len is not None:
+            spans["prompt"] = {
+                "start": cur,
+                "end": cur + task_len,
+            }
+
+            cur += task_len
+
+        if state_len is not None:
+            spans["state"] = {
+                "start": cur,
+                "end": cur + state_len,
+            }
+
+            cur += state_len
+
+        spans["prefix"] = {
+            "start": 0,
+            "end": int(prefix_tokens.shape[1]),
+        }
+
+        return spans
+
     @override
     def sample_actions(
         self,
@@ -559,15 +627,22 @@ class Pi0(_model.BaseModel):
                 noise=noise,
             )
 
+        token_spans = None
+
+        if is_hook_enabled("token_spans"):
+            token_spans = self._compute_token_spans(
+                observation,
+                prefix_tokens,
+            )
+
         hook_data = {
             "observation": observation,
+            "token_spans": token_spans,
             "prefix_tokens": prefix_tokens,
             "prefix_mask": prefix_mask,
             "prefix_ar_mask": prefix_ar_mask,
             "prefix_final_hidden_state": prefix_out,
             "prefix_gradients": prefix_gradients,
-            "kv_cache_after_prefix": kv_cache,
-            "actions": x_0,
             "action_chunks": action_chunks,
             "raw_attention_weights": raw_attention_weights,
         }

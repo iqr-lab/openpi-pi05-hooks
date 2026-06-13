@@ -19,10 +19,10 @@ CHECKPOINTS=(
   /nfs/roberts/scratch/pi_tkf6/zs377/checkpoints/pi05_libero
 )
 
-NUM_TRIALS=10
+NUM_TRIALS=1
 PY_PATH="/app/src:/app/third_party/libero:/app/packages/openpi-client/src"
 
-HOOKS="observation_input,prefix_final_hidden_state,action_chunks,raw_attention_weights"
+HOOKS="observation_input,token_spans,prefix_embeddings,prefix_final_hidden_state,prefix_gradients,action_chunks,raw_attention_weights"
 ATTN_LAYERS="1,16"
 NUM_ACTION_CHUNKS=1
 
