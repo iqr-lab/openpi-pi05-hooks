@@ -20,11 +20,14 @@ CHECKPOINTS=(
 )
 
 NUM_TRIALS=1
+
 PY_PATH="/app/src:/app/third_party/libero:/app/packages/openpi-client/src"
 
-HOOKS="observation_input,token_spans,prefix_embeddings,prefix_final_hidden_state,prefix_gradients,action_chunks,raw_attention_weights"
-ATTN_LAYERS="1,16"
-NUM_ACTION_CHUNKS=1
+########################################
+# Hook configuration
+########################################
+
+HOOK_CONFIG="/app/hooks.yaml"
 
 EXP_NAME=$(basename "${CHECKPOINTS[0]}")
 LOG_ROOT="logs/${EXP_NAME}"
@@ -83,11 +86,16 @@ wait_for_gpu_to_clear() {
 run_single() {
   CKPT=$1
   CKPT_IDX=$2
+
   CKPT_NAME=$(basename "$CKPT")
   PORT=$((BASE_PORT + CKPT_IDX))
 
   CKPT_LOG_DIR="$LOG_ROOT/$CKPT_NAME"
   mkdir -p "$CKPT_LOG_DIR"
+
+  TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+  RECORD_DIR="/nfs/roberts/scratch/pi_tkf6/as4643/policy_records_pi05_libero_${TIMESTAMP}"
+  mkdir -p "$RECORD_DIR"
 
   SERVER_LOG="$CKPT_LOG_DIR/server.log"
   EVAL_LOG="$CKPT_LOG_DIR/eval.log"
@@ -96,12 +104,11 @@ run_single() {
   echo "========================================"
   echo "Checkpoint: $CKPT"
   echo "Port: $PORT"
-  echo "Hooks: $HOOKS"
-  echo "Attention layers: $ATTN_LAYERS"
-  echo "Num action chunks: $NUM_ACTION_CHUNKS"
+  echo "Hook config: $HOOK_CONFIG"
   echo "========================================"
 
   echo "[1/3] Starting server..."
+
   touch "$SERVER_LOG"
 
   apptainer exec --nv --containall \
@@ -120,17 +127,21 @@ run_single() {
 
       export XLA_PYTHON_CLIENT_PREALLOCATE=false
       export XLA_PYTHON_CLIENT_MEM_FRACTION=0.7
+
       export PYTHONUNBUFFERED=1
       export PYTHONFAULTHANDLER=1
 
-      export PI05_HOOKS=\"$HOOKS\"
-      export PI05_ATTN_LAYERS=\"$ATTN_LAYERS\"
-      export PI05_NUM_ACTION_CHUNKS=\"$NUM_ACTION_CHUNKS\"
+      echo '========================================'
+      echo 'Using hook config:'
+      cat $HOOK_CONFIG
+      echo '========================================'
 
       exec /.venv/bin/python -u scripts/serve_policy.py \
         --env LIBERO \
         --port $PORT \
         --record \
+        --hook-config $HOOK_CONFIG \
+        --record-dir "$RECORD_DIR" \
         policy:checkpoint \
         --policy.config pi05_libero \
         --policy.dir $CKPT
@@ -141,19 +152,27 @@ run_single() {
   (
     while true; do
       echo "=== $(date) ===" >> "$MEM_LOG"
-      nvidia-smi --query-gpu=timestamp,name,memory.used,memory.free,memory.total,utilization.gpu \
-        --format=csv,noheader >> "$MEM_LOG" 2>&1 || true
+
+      nvidia-smi \
+        --query-gpu=timestamp,name,memory.used,memory.free,memory.total,utilization.gpu \
+        --format=csv,noheader \
+        >> "$MEM_LOG" 2>&1 || true
+
       echo "CPU/RAM: $(free -h | awk '/^Mem/{print "used="$3" free="$4" total="$2}')" >> "$MEM_LOG"
+
       echo "" >> "$MEM_LOG"
+
       sleep 10
     done
   ) &
+
   MEM_MONITOR_PID=$!
 
   echo "[2/3] Waiting for server..."
   wait_for_server
 
   echo "[3/3] Running evaluation..."
+
   sleep $((RANDOM % 20))
 
   apptainer exec --nv --containall \
@@ -174,13 +193,14 @@ run_single() {
       export PYTHONFAULTHANDLER=1
 
       mkdir -p /tmp/libero
-      cat <<EOF > /tmp/libero/config.yaml
-benchmark_root: /app/third_party/libero/libero/libero
-bddl_files: /app/third_party/libero/libero/libero/./bddl_files
-init_states: /app/third_party/libero/libero/libero/./init_files
-datasets: /app/third_party/libero/libero/libero/../datasets
-assets: /app/third_party/libero/libero/libero/./assets
-EOF
+
+      printf '%s\n' \
+      'benchmark_root: /app/third_party/libero/libero/libero' \
+      'bddl_files: /app/third_party/libero/libero/libero/./bddl_files' \
+      'init_states: /app/third_party/libero/libero/libero/./init_files' \
+      'datasets: /app/third_party/libero/libero/libero/../datasets' \
+      'assets: /app/third_party/libero/libero/libero/./assets' \
+      > /tmp/libero/config.yaml
 
       export MUJOCO_GL=osmesa
       export PYOPENGL_PLATFORM=osmesa
@@ -189,10 +209,12 @@ EOF
         --args.task_suite_name libero_10 \
         --args.num_trials_per_task $NUM_TRIALS \
         --args.port $PORT \
-        --args.host 127.0.0.1
+        --args.host 127.0.0.1 \
+        --args.record_dir "$RECORD_DIR"
     " > "$EVAL_LOG" 2>&1
 
   echo "Stopping server..."
+
   cleanup_server
   wait_for_gpu_to_clear
 }
@@ -206,4 +228,7 @@ for idx in "${!CHECKPOINTS[@]}"; do
   run_single "${CHECKPOINTS[$idx]}" "$idx"
 done
 
+echo "========================================"
 echo "ALL DONE"
+echo "Logs saved to: $LOG_ROOT"
+echo "========================================"

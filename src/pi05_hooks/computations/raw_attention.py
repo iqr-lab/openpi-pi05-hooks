@@ -63,7 +63,7 @@ def compute_raw_attention_weights(
     cfg = get_hook_config().get("raw_attention_weights", {})
     selected_layers = cfg.get("layers")
 
-    if selected_layers is None:
+    if selected_layers is None or selected_layers == "all":
         layer_indices = jnp.arange(attn_probs.shape[0])
         attn_weights = attn_probs[:, :, :, :, :, :key_end]
     else:
