@@ -372,6 +372,66 @@ class Pi0(_model.BaseModel):
             "num_layers": num_layers,
         }
 
+    def _compute_prefix_gradients(
+        self,
+        observation,
+        prefix_tokens,
+        prefix_mask,
+        prefix_ar_mask,
+        noise,
+    ):
+        batch_size = prefix_tokens.shape[0]
+        timestep_for_grad = jnp.ones(batch_size)
+
+        def score_fn(prefix_emb):
+            prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+            prefix_positions = jnp.cumsum(prefix_mask, axis=1) - 1
+
+            _, kv_cache = self.PaliGemma.llm(
+                [prefix_emb, None],
+                mask=prefix_attn_mask,
+                positions=prefix_positions,
+            )
+
+            suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
+                observation,
+                noise,
+                timestep_for_grad,
+            )
+
+            suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
+            prefix_for_suffix = einops.repeat(
+                prefix_mask,
+                "b p -> b s p",
+                s=suffix_tokens.shape[1],
+            )
+            full_attn_mask = jnp.concatenate(
+                [prefix_for_suffix, suffix_attn_mask],
+                axis=-1,
+            )
+
+            suffix_positions = (
+                jnp.sum(prefix_mask, axis=-1)[:, None]
+                + jnp.cumsum(suffix_mask, axis=-1)
+                - 1
+            )
+
+            (_, suffix_out), _ = self.PaliGemma.llm(
+                [None, suffix_tokens],
+                mask=full_attn_mask,
+                positions=suffix_positions,
+                kv_cache=kv_cache,
+                adarms_cond=[None, adarms_cond],
+            )
+
+            v_t = self.action_out_proj(
+                suffix_out[:, -self.action_horizon :]
+            )
+
+            return jnp.sum(v_t)
+
+        return jax.grad(score_fn)(prefix_tokens)
+
     @override
     def sample_actions(
         self,
@@ -489,12 +549,23 @@ class Pi0(_model.BaseModel):
                 noise=noise,
             )
 
+        prefix_gradients = None
+        if is_hook_enabled("prefix_gradients"):
+            prefix_gradients = self._compute_prefix_gradients(
+                observation=observation,
+                prefix_tokens=prefix_tokens,
+                prefix_mask=prefix_mask,
+                prefix_ar_mask=prefix_ar_mask,
+                noise=noise,
+            )
+
         hook_data = {
             "observation": observation,
             "prefix_tokens": prefix_tokens,
             "prefix_mask": prefix_mask,
             "prefix_ar_mask": prefix_ar_mask,
             "prefix_final_hidden_state": prefix_out,
+            "prefix_gradients": prefix_gradients,
             "kv_cache_after_prefix": kv_cache,
             "actions": x_0,
             "action_chunks": action_chunks,
