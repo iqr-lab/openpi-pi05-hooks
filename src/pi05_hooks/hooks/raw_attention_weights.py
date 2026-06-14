@@ -14,15 +14,7 @@ def raw_attention_weights_hook(data):
         "data": {
             "weights": weights,
             "layers": raw_attention["layers"],
-        },
-        "metadata": {
-            "shape": list(weights.shape),
-            "meaning": "[batch, layers, heads, suffix_tokens, key_tokens]",
-            "key_end": raw_attention["key_end"],
-            "suffix_len": raw_attention["suffix_len"],
-            "num_heads": raw_attention["num_heads"],
-            "num_layers": raw_attention["num_layers"],
-        },
+        }
     }
 
 
