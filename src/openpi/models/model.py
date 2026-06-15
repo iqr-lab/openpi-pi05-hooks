@@ -267,7 +267,7 @@ class BaseModelConfig(abc.ABC):
 
     @abc.abstractmethod
     def inputs_spec(self, *, batch_size: int = 1) -> tuple[Observation, Actions]:
-        """Returns the input specification for the model. Values are jax.ShapeDtypeStruct."""
+        """Returns th   e input specification for the model. Values are jax.ShapeDtypeStruct."""
 
     def fake_obs(self, batch_size: int = 1) -> Observation:
         observation_spec, _ = self.inputs_spec(batch_size=batch_size)
