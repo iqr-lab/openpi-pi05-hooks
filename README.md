@@ -197,11 +197,15 @@ hooks:
     - prefix_gradients
     - action_chunks
     - raw_attention_weights
+    - value_vectors
 
   action_chunks:
     num_chunks: 8
 
   raw_attention_weights:
+    layers: [1, 16]
+
+  value_vectors:
     layers: [1, 16]
 ```
 
@@ -427,6 +431,27 @@ or:
 ```yaml
 raw_attention_weights:
   layers: all
+```
+
+---
+
+## value_vectors
+
+Stores the value vectors paired with the π0.5 prefix keys used by suffix attention.
+They are read directly from the prefix KV cache, so this hook does not run an
+additional transformer pass.
+
+Shape:
+
+```text
+[batch, layers, key_tokens, kv_heads, head_dim]
+```
+
+Layer selection is controlled independently from attention-weight recording:
+
+```yaml
+value_vectors:
+  layers: [1, 16]
 ```
 
 ---
