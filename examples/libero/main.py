@@ -5,7 +5,7 @@ import json
 import math
 import pathlib
 import re
-from typing import Optional
+from typing import Dict, List, Optional
 
 import imageio
 from libero.libero import benchmark
@@ -125,7 +125,7 @@ def _load_task_classification() -> dict:
         return json.load(f)
 
 
-def _get_task_metadata(task_suite, suite_name: str) -> list[dict]:
+def _get_task_metadata(task_suite, suite_name: str) -> List[Dict]:
     """Returns per-task (base, category, difficulty) metadata used for balanced sampling.
 
     Falls back to a single category/difficulty bucket (keyed by the task's own name) when the
@@ -150,7 +150,7 @@ def _get_task_metadata(task_suite, suite_name: str) -> list[dict]:
     return metadata
 
 
-def _select_episode_counts(metadata: list[dict], max_episodes: int, capacity: int, seed: int) -> np.ndarray:
+def _select_episode_counts(metadata: List[Dict], max_episodes: int, capacity: int, seed: int) -> np.ndarray:
     """Greedily distributes `max_episodes` episode slots across tasks so the running selection
     stays as balanced as possible across base tasks, perturbation categories, and difficulty
     levels simultaneously. Returns a per-task episode count (each <= capacity).
@@ -438,7 +438,7 @@ def _write_json(path: pathlib.Path, data) -> None:
     tmp_path.replace(path)
 
 
-def _write_episode_summaries(output_dir: pathlib.Path, episode_summaries: list[dict]) -> None:
+def _write_episode_summaries(output_dir: pathlib.Path, episode_summaries: List[Dict]) -> None:
     _write_json(output_dir / "episode_summaries.json", episode_summaries)
     # Backwards-compatible name used by the existing hook/eval documentation.
     _write_json(output_dir / "episodes.json", episode_summaries)
