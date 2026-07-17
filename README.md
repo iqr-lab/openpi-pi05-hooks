@@ -180,6 +180,9 @@ These hooks should not perform expensive computation.
 
 Hooks are configured through a YAML file.
 
+For a conceptual and tensor-level explanation of each π0.5 hook, see
+[docs/pi05_hooks_technical.md](/Users/annsong/Desktop/openpi-pi05-hooks/docs/pi05_hooks_technical.md).
+
 Example:
 
 ```yaml
@@ -356,8 +359,8 @@ Shape:
 Stores:
 
 ```text
-d(sum(actions[:,0,:]))
----------------------
+d(sum(first_step_flow_field))
+-----------------------------
 d(prefix_embeddings)
 ```
 
@@ -373,7 +376,7 @@ Used together with:
 token_spans
 ```
 
-to attribute action predictions to:
+to attribute first-step flow-field predictions to:
 
 * image tokens
 * prompt tokens
@@ -405,7 +408,7 @@ If:
 num_chunks: 8
 ```
 
-then seven additional chunks are sampled using different diffusion noise.
+then seven additional chunks are sampled using different flow-matching noise.
 
 ---
 
@@ -438,8 +441,8 @@ raw_attention_weights:
 ## value_vectors
 
 Stores the value vectors paired with the π0.5 prefix keys used by suffix attention.
-They are read directly from the prefix KV cache, so this hook does not run an
-additional transformer pass.
+
+They are read directly from the prefix KV cache, so this hook does not run an additional transformer pass.
 
 Shape:
 

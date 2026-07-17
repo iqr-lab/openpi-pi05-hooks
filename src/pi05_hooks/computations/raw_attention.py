@@ -15,6 +15,15 @@ def compute_raw_attention_weights(
     kv_cache,
     noise,
 ):
+    """Return π0.5 action-suffix attention onto prefix keys.
+
+    This records the first flow-matching denoising step: the suffix is built from
+    the initial Gaussian action noise at timestep τ=1, and the cached prefix
+    keys/values come from the normal prefix prefill pass.
+    """
+    if not getattr(model, "pi05", False):
+        raise ValueError("raw_attention_weights is implemented for π0.5 models only.")
+
     batch_size = prefix_tokens.shape[0]
     prefix_len = prefix_tokens.shape[1]
 
@@ -57,8 +66,10 @@ def compute_raw_attention_weights(
         kv_cache=kv_cache,
     )
 
-    has_suffix_state_token = not model.pi05
-    key_end = prefix_len + (1 if has_suffix_state_token else 0)
+    # In π0.5 the proprioceptive state is tokenized into the prefix. The suffix
+    # contains only continuous action tokens, so the prefix-only key range ends
+    # exactly at prefix_len.
+    key_end = prefix_len
 
     cfg = get_hook_config().get("raw_attention_weights", {})
     selected_layers = cfg.get("layers")
@@ -68,7 +79,7 @@ def compute_raw_attention_weights(
         attn_weights = attn_probs[:, :, :, :, :, :key_end]
     else:
         layer_indices = jnp.array(selected_layers)
-        attn_weights = attn_probs[selected_layers, :, :, :, :, :key_end]
+        attn_weights = attn_probs[layer_indices, :, :, :, :, :key_end]
 
     num_layers = attn_weights.shape[0]
     k_heads = attn_weights.shape[2]
