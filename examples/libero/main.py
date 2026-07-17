@@ -46,6 +46,7 @@ class Args:
     #################################################################################################################
     # Utils
     #################################################################################################################
+    record_dir: Optional[str] = None  # Optional output root; writes videos/ and output/ under this directory
     video_out_path: str = "libero_videos"  # Path to save videos
     resume_from_json: Optional[str] = None  # Path to previous episode_summaries.json; episodes already in it are skipped
 
@@ -224,8 +225,16 @@ def eval_libero(args: Args) -> None:
 
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
 
-    video_out_path = pathlib.Path(args.video_out_path)
+    if args.record_dir is not None:
+        output_root = pathlib.Path(args.record_dir)
+        video_out_path = output_root / "videos"
+        summary_out_path = output_root / "output"
+    else:
+        video_out_path = pathlib.Path(args.video_out_path)
+        summary_out_path = video_out_path
+
     video_out_path.mkdir(parents=True, exist_ok=True)
+    summary_out_path.mkdir(parents=True, exist_ok=True)
 
     # episode summary bookkeeping
     episode_summaries = []
@@ -403,7 +412,7 @@ def eval_libero(args: Args) -> None:
 
             # Checkpoint every 50 episodes in case the run is interrupted.
             if total_episodes % 50 == 0:
-                _write_episode_summaries(video_out_path, episode_summaries)
+                _write_episode_summaries(summary_out_path, episode_summaries)
 
         # Log final results
         if task_episodes > 0:
@@ -416,8 +425,8 @@ def eval_libero(args: Args) -> None:
     else:
         logging.info(f"Total success rate: {float(total_successes) / float(total_episodes)}")
     logging.info(f"Total episodes: {total_episodes}")
-    _write_episode_summaries(video_out_path, episode_summaries)
-    logging.info(f"Saved episode summaries to: {video_out_path / 'episode_summaries.json'}")
+    _write_episode_summaries(summary_out_path, episode_summaries)
+    logging.info(f"Saved episode summaries to: {summary_out_path / 'episode_summaries.json'}")
 
 
 def _get_libero_env(task, resolution, seed):
@@ -470,4 +479,4 @@ def _quat2axisangle(quat):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    eval_libero(tyro.cli(Args))
+    tyro.cli(eval_libero)
