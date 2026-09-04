@@ -333,3 +333,61 @@ hooks:
   value_vectors:
     layers: [1, 16]
 ```
+
+## Recording
+
+Hook records are large, especially with hidden states, gradients, raw attention and
+value vectors enabled. `PolicyRecorder` writes one file per `infer(...)` call as
+`step_N.pirec`, a compressed container (see `openpi.policies.record_io`). Each array is
+narrowed in dtype, byte-shuffled so exponent bytes group together, then compressed.
+
+```yaml
+record:
+  async_write: true
+  max_pending_writes: 4
+  compress: true
+  float_dtype: auto      # auto (lossless) | bf16 | f16 | fp8_e4m3 | none
+  codec: zstd            # zstd | zlib
+  level: 1
+  shuffle: true
+  writer_threads: 1
+  log_every: 0
+```
+
+`float_dtype: auto` is lossless: float32 is stored as bfloat16 only where the round-trip
+is bit-exact, which covers every tensor the model produced in bfloat16. Arrays are always
+returned in their original dtype on load, so analysis code is unaffected. Typical result
+is about 2.7x smaller than the equivalent `.npy`; `fp8_e4m3` reaches roughly 4.4x at
+reduced precision.
+
+`level` is not worth tuning: levels 1 through 19 land within 3% of each other, while
+level 19 is roughly 50x slower to encode.
+
+Set `compress: false` to fall back to legacy `step_N.npy` files.
+
+Read records with `record_io.load_record(path)`, which accepts both `.pirec` and legacy
+`.npy`:
+
+```python
+from openpi.policies import record_io
+
+record = record_io.load_record(record_dir / "step_0.pirec")
+```
+
+### Write performance
+
+Encoding and the disk write both happen on background threads, so neither blocks
+inference. `writer_threads` raises the number of workers, which helps when the
+destination is a network filesystem slow enough that one writer cannot keep up.
+`log_every: N` reports encode ms, write ms, MB/step, write throughput and how long
+inference spent blocked waiting for a free queue slot -- that last number is the one that
+says whether recording is actually costing you anything.
+
+Operational semantics:
+
+- `async_write: true` lets inference return once the record payload is prepared and queued.
+- `max_pending_writes` bounds memory growth; if disk is slower than inference for long
+  enough, inference eventually blocks until the writers catch up.
+- Writers are flushed on `PolicyRecorder.close()` and through an `atexit` handler.
+- If a background write fails, the next submit or close raises `RuntimeError` with the
+  original error attached.

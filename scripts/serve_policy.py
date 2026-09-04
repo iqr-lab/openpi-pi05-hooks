@@ -63,6 +63,15 @@ def load_hook_config(path: str | None) -> dict:
                 "enabled": False,
                 "dir": None,
                 "add_timestamp": True,
+                "async_write": True,
+                "max_pending_writes": 4,
+                "compress": True,
+                "float_dtype": "auto",
+                "codec": "zstd",
+                "level": 1,
+                "shuffle": True,
+                "writer_threads": 1,
+                "log_every": 0,
             },
             "hooks": {
                 "enabled": [],
@@ -199,7 +208,19 @@ def main(args: Args) -> None:
             args=args,
         )
 
-        policy = _policy.PolicyRecorder(policy, record_dir)
+        policy = _policy.PolicyRecorder(
+            policy,
+            record_dir,
+            async_write=bool(record_cfg.get("async_write", True)),
+            max_pending_writes=int(record_cfg.get("max_pending_writes", 4)),
+            compress=bool(record_cfg.get("compress", True)),
+            float_dtype=str(record_cfg.get("float_dtype", "auto")),
+            codec=str(record_cfg.get("codec", "zstd")),
+            level=int(record_cfg.get("level", 1)),
+            shuffle=bool(record_cfg.get("shuffle", True)),
+            writer_threads=int(record_cfg.get("writer_threads", 1)),
+            log_every=int(record_cfg.get("log_every", 0)),
+        )
         print("DEBUG: PolicyRecorder created", flush=True)
 
     hostname = socket.gethostname()

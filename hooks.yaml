@@ -2,6 +2,16 @@ record:
   enabled: true
   dir: /nfs/roberts/scratch/pi_tkf6/as4643/policy_records
   add_timestamp: true
+  async_write: true
+  max_pending_writes: 4
+  # Compressed record container (step_*.pirec). Set compress: false for legacy step_*.npy.
+  compress: true
+  float_dtype: auto        # auto (lossless) | bf16 | f16 | fp8_e4m3 | none
+  codec: zstd              # zstd | zlib
+  level: 1                 # 1 is both fastest and smallest here; 1-19 differ by <3%
+  shuffle: true
+  writer_threads: 1        # raise to 2-4 if writes to a network filesystem lag inference
+  log_every: 0             # log encode/write/queue-block timing every N records; 0 disables
 
 hooks:
   enabled:
