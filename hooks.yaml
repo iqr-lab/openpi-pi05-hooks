@@ -23,6 +23,7 @@ hooks:
     - action_chunks
     - raw_attention_weights
     - value_vectors
+    - suffix_final_hidden_state
 
   action_chunks:
     num_chunks: 1
@@ -32,3 +33,8 @@ hooks:
 
   value_vectors:
     layers: [1, 16]
+
+  suffix_final_hidden_state:
+    reduce: mean_H_k   # none | mean_H | mean_k | mean_H_k
+    steps: all
+    max_steps: 10

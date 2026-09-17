@@ -82,6 +82,7 @@ src/pi05_hooks/
     prefix_gradients.py
     action_chunks.py
     raw_attention_weights.py
+    suffix_final_hidden_state.py
 
 configs/
   hooks.yaml
@@ -201,6 +202,7 @@ hooks:
     - action_chunks
     - raw_attention_weights
     - value_vectors
+    - suffix_final_hidden_state
 
   action_chunks:
     num_chunks: 8
@@ -436,6 +438,16 @@ raw_attention_weights:
   layers: all
 ```
 
+Size is `layers x heads x suffix_tokens x key_tokens x bytes`. The suffix
+dimension is `action_horizon`, so this hook costs roughly `action_horizon`
+times what the equivalent π₀-FAST hook costs — that hook records a single
+first-decode row. At 18 layers, 8 heads, `action_horizon=10` and ~816 key
+tokens this is about 2.2 MB per record in bfloat16.
+
+This hook records attention weights only. Unlike an earlier version of the
+π₀-FAST hook, it does not bundle a copy of the value cache; use `value_vectors`
+for that, with a `layers` selection covering the one used here.
+
 ---
 
 ## value_vectors
@@ -456,6 +468,58 @@ Layer selection is controlled independently from attention-weight recording:
 value_vectors:
   layers: [1, 16]
 ```
+
+Size is `layers x key_tokens x kv_heads x head_dim x bytes`. Gemma uses
+**multi-query attention** — every variant in `gemma.py` sets `num_kv_heads=1`
+and `head_dim=256` — so all 8 query heads share one KV head and each prefix
+token costs only 256 values per layer. At 18 layers this is about 7.2 MB per
+record in bfloat16.
+
+That sharing is what keeps the hook affordable. The same hook on OpenVLA-OFT,
+whose Llama-2-7B backbone uses full multi-head attention with 32 independent KV
+heads (`kv_heads x head_dim = 4096`), costs 16x more per layer per token.
+
+Layers are not redundant: on π₀-FAST, layers 1 and 16 correlate at 0.03, so
+recording a subset trades real information for size.
+
+---
+
+## suffix_final_hidden_state
+
+Stores the action expert's final-layer hidden state (after the final adaptive
+RMSNorm, i.e. the input to `action_out_proj`) for the action tokens at each
+flow-matching denoising step. These are the features used by SAFE
+([arXiv:2506.09937](https://arxiv.org/abs/2506.09937)) for π0 failure detection.
+
+Capture happens inside the normal denoising loop, so it adds no extra
+transformer passes and does not change the predicted actions.
+
+Configuration:
+
+```yaml
+suffix_final_hidden_state:
+  reduce: mean_H_k   # none | mean_H | mean_k | mean_H_k
+  steps: all         # or a list, e.g. [0, -1]; negative indices count from the last step run
+  max_steps: 10      # static buffer size; must be >= num_steps used at inference
+```
+
+Shape of `hidden_states` by `reduce`:
+
+```text
+none      [batch, steps, action_horizon, hidden_dim]
+mean_H    [batch, steps, hidden_dim]
+mean_k    [batch, action_horizon, hidden_dim]
+mean_H_k  [batch, hidden_dim]
+```
+
+The record also contains `steps` (step indices), `valid_steps` (false for
+buffer rows beyond the number of steps actually run; these are zero and are
+excluded from `mean_k`/`mean_H_k`), `num_steps`, and `reduce`.
+
+Step 0 is the pure-noise input; the last step produces the final action.
+`mean_H_k` is SAFE's default feature (1024 values per record for the
+`gemma_300m` action expert); `none` costs `steps x action_horizon x hidden_dim`,
+about 1 MB per record in bfloat16 at 10 steps and horizon 50.
 
 ---
 

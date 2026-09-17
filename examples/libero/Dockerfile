@@ -21,6 +21,8 @@ RUN apt-get update && \
     libglfw3-dev \
     libgles2-mesa-dev \
     libglib2.0-0 \
+    imagemagick \
+    libmagickwand-dev \
     libsm6 \
     libxrender1 \
     libxext6

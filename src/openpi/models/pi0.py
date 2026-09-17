@@ -13,6 +13,8 @@ import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
 
+from pi05_hooks.computations.suffix_final_hidden_state import suffix_hidden_buffer_steps
+from pi05_hooks.hook_runner import is_hook_enabled
 from pi05_hooks.runtime import collect_hook_data
 
 logger = logging.getLogger("openpi")
@@ -321,9 +323,11 @@ class Pi0(_model.BaseModel):
             positions=positions,
         )
 
-        def run_denoising(start_noise):
+        def run_denoising(start_noise, *, capture_hidden=False):
+            # capture_hidden=True also returns the action expert's final hidden state
+            # (after the final norm) for the action tokens of every denoising step.
             def step(carry):
-                x_t, time = carry
+                x_t, time, step_idx, hidden_buf = carry
 
                 suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                     observation,
@@ -364,15 +368,41 @@ class Pi0(_model.BaseModel):
 
                 assert prefix_out_step is None
 
-                v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+                action_hidden = suffix_out[:, -self.action_horizon :]
+                v_t = self.action_out_proj(action_hidden)
 
-                return x_t + dt * v_t, time + dt
+                if hidden_buf is not None:
+                    # Steps beyond the buffer are dropped rather than wrapping around.
+                    hidden_buf = hidden_buf.at[step_idx].set(
+                        action_hidden.astype(hidden_buf.dtype), mode="drop"
+                    )
+
+                return x_t + dt * v_t, time + dt, step_idx + 1, hidden_buf
 
             def cond(carry):
-                x_t, time = carry
+                x_t, time, _, _ = carry
                 return time >= -dt / 2
 
-            x_0, _ = jax.lax.while_loop(cond, step, (start_noise, 1.0))
+            hidden_buf = None
+            if capture_hidden:
+                # num_steps is traced under jit, so the buffer size comes from the hook config.
+                hidden_buf = jnp.zeros(
+                    (
+                        suffix_hidden_buffer_steps(),
+                        batch_size,
+                        self.action_horizon,
+                        self.action_out_proj.in_features,
+                    ),
+                    dtype=prefix_out.dtype,
+                )
+
+            x_0, _, _, hidden_buf = jax.lax.while_loop(
+                cond,
+                step,
+                (start_noise, 1.0, jnp.int32(0), hidden_buf),
+            )
+            if capture_hidden:
+                return x_0, hidden_buf
             return x_0
 
         if noise is None:
@@ -381,7 +411,11 @@ class Pi0(_model.BaseModel):
                 (batch_size, self.action_horizon, self.action_dim),
             )
 
-        x_0 = run_denoising(noise)
+        suffix_hidden_states = None
+        if is_hook_enabled("suffix_final_hidden_state"):
+            x_0, suffix_hidden_states = run_denoising(noise, capture_hidden=True)
+        else:
+            x_0 = run_denoising(noise)
 
         hook_data = collect_hook_data(
             model=self,
@@ -395,6 +429,8 @@ class Pi0(_model.BaseModel):
             noise=noise,
             actions=x_0,
             run_denoising=run_denoising,
+            suffix_hidden_states=suffix_hidden_states,
+            num_steps=num_steps,
         )
 
         return x_0, hook_data

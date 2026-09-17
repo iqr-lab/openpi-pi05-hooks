@@ -1,6 +1,7 @@
 from pi05_hooks.computations.action_chunks import compute_action_chunks
 from pi05_hooks.computations.prefix_gradients import compute_prefix_gradients
 from pi05_hooks.computations.raw_attention import compute_raw_attention_weights
+from pi05_hooks.computations.suffix_final_hidden_state import compute_suffix_final_hidden_state
 from pi05_hooks.computations.token_spans import compute_token_spans
 from pi05_hooks.computations.value_vectors import compute_value_vectors
 from pi05_hooks.hook_runner import is_hook_enabled
@@ -19,6 +20,8 @@ def collect_hook_data(
     noise,
     actions,
     run_denoising,
+    suffix_hidden_states=None,
+    num_steps=None,
 ):
     data = {
         "observation": observation,
@@ -64,6 +67,12 @@ def collect_hook_data(
             prefix_ar_mask=prefix_ar_mask,
             kv_cache=kv_cache,
             noise=noise,
+        )
+
+    if is_hook_enabled("suffix_final_hidden_state"):
+        data["suffix_final_hidden_state"] = compute_suffix_final_hidden_state(
+            hidden_states=suffix_hidden_states,
+            num_steps=num_steps,
         )
 
     if is_hook_enabled("value_vectors"):

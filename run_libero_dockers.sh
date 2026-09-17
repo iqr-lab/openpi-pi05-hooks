@@ -16,7 +16,7 @@ LIBERO_SIF="/nfs/roberts/project/pi_tkf6/as4643/libero.sif"
 NFS_SCRATCH_ROOT="/nfs/roberts/scratch"
 
 CHECKPOINTS=(
-  /nfs/roberts/scratch/pi_tkf6/zs377/checkpoints/pi05_libero
+  /nfs/roberts/scratch/pi_tkf6/as4643/checkpoints/pi05_libero
 )
 
 NUM_TRIALS=1

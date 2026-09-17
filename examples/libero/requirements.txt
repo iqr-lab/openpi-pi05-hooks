@@ -42,6 +42,8 @@ mdurl==0.1.2
     # via markdown-it-py
 mujoco==3.2.3
     # via robosuite
+networkx==3.1
+    # via scikit-image
 numba==0.53.1
     # via robosuite
 numpy==1.22.4
@@ -81,6 +83,8 @@ python-dateutil==2.9.0.post0
     # via matplotlib
 python-xlib==0.33
     # via pynput
+pywavelets==1.4.1
+    # via scikit-image
 pyyaml==6.0.2
     # via -r examples/libero/requirements.in
 requests==2.32.3
@@ -88,6 +92,8 @@ requests==2.32.3
 rich==13.9.4
     # via tyro
 robosuite==1.4.1
+    # via -r examples/libero/requirements.in
+scikit-image==0.19.3
     # via -r examples/libero/requirements.in
 scipy==1.10.1
     # via robosuite
@@ -104,6 +110,8 @@ six==1.17.0
     #   python-xlib
 termcolor==2.4.0
     # via robosuite
+tifffile==2023.7.10
+    # via scikit-image
 torch==1.11.0+cu113
     # via
     #   -r examples/libero/requirements.in
@@ -129,6 +137,8 @@ tyro==0.9.2
     # via -r examples/libero/requirements.in
 urllib3==2.2.3
     # via requests
+wand==0.6.13
+    # via -r examples/libero/requirements.in
 zipp==3.20.2
     # via
     #   etils
