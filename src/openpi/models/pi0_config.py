@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 from typing import TYPE_CHECKING
 
 import flax.nnx as nnx
@@ -10,6 +11,8 @@ from openpi.models import model as _model
 import openpi.models.gemma as _gemma
 from openpi.shared import array_typing as at
 import openpi.shared.nnx_utils as nnx_utils
+
+logger = logging.getLogger("openpi")
 
 if TYPE_CHECKING:
     from openpi.models.pi0 import Pi0
@@ -30,6 +33,8 @@ class Pi0Config(_model.BaseModelConfig):
     # - the action expert uses adaRMSNorm to inject the flow matching timestep
     pi05: bool = False
     # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
+    # For pi05 this is forced to True in __post_init__ so the prefix always contains a state token
+    # span (the hooks rely on it); a False passed by a config is ignored.
     discrete_state_input: bool = None  # type: ignore
 
     pytorch_compile_mode: str | None = "max-autotune"
@@ -37,8 +42,14 @@ class Pi0Config(_model.BaseModelConfig):
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
-        if self.discrete_state_input is None:
-            object.__setattr__(self, "discrete_state_input", self.pi05)
+        if self.pi05:
+            if self.discrete_state_input is False:
+                logger.warning(
+                    "discrete_state_input=False is ignored for pi05: the state is always tokenized into the prefix."
+                )
+            object.__setattr__(self, "discrete_state_input", True)
+        elif self.discrete_state_input is None:
+            object.__setattr__(self, "discrete_state_input", False)
         if self.pytorch_compile_mode is not None:
             assert self.pytorch_compile_mode in [
                 "default",

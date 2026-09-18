@@ -21,7 +21,7 @@ The paper describes π0.5 as using:
 
 In this repository, the hook system captures the low-level `Pi0.sample_actions()` path. It does not currently hook the separate high-level autoregressive subtask generation path. So the hooks answer questions like “what did the low-level action expert attend to while producing this action chunk?” rather than “why did the high-level policy choose this subtask?”.
 
-One implementation nuance: π0.5 supports tokenized proprioceptive state in the prefix when `discrete_state_input=True`. Some local configs disable that, in which case the state span is absent and the prefix contains images plus task/prompt tokens.
+One implementation nuance: π0.5 tokenizes the proprioceptive state into the prefix. `Pi0Config.__post_init__` forces `discrete_state_input=True` whenever `pi05=True`, ignoring (with a warning) a `False` passed by a config, so the state token span is always present.
 
 ## Hook capture timing
 
